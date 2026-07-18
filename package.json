@@ -1,0 +1,14 @@
+{
+  "name": "mention-line-notifier",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node -r dotenv/config src/check-mentions.mjs",
+    "discover": "DISCOVER=1 node -r dotenv/config src/check-mentions.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "playwright": "^1.49.0"
+  }
+}

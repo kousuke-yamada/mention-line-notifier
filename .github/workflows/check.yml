@@ -1,0 +1,65 @@
+name: Check mentions
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: check-mentions
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Playwright のブラウザをキャッシュして実行を高速化
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Check mentions
+        run: node src/check-mentions.mjs
+        env:
+          SITE_EMAIL: ${{ secrets.SITE_EMAIL }}
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          MENTION_ITEM_SELECTOR: ${{ vars.MENTION_ITEM_SELECTOR }}
+
+      - name: Commit state
+        if: always()
+        run: |
+          # 60日間コミットがないと schedule が無効化されるため、50日経過で keepalive を更新
+          if [ -z "$(git log -1 --format=%ct 2>/dev/null)" ] || \
+             [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -gt 4320000 ]; then
+            date > .keepalive
+            git add .keepalive
+          fi
+          git add state.json 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "Update mention state"
+            git pull --rebase origin main
+            git push
+          fi
