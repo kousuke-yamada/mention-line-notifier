@@ -9,8 +9,9 @@ const STATE_FILE = "state.json";
 const DEBUG_DIR = "debug";
 // メンション一覧の1件分を指すセレクタ。CSSモジュールのハッシュは再デプロイで
 // 変わりうるため、クラス名の前方一致で指定してハッシュ依存を避ける。
+// 未設定・空文字の場合はデフォルトを使う(?? は空文字を弾かないため trim()||)
 const MENTION_ITEM_SELECTOR =
-  process.env.MENTION_ITEM_SELECTOR ??
+  process.env.MENTION_ITEM_SELECTOR?.trim() ||
   "[class*='_activity_list_container_'] > [class*='_hover_container_']";
 const MAX_SEEN = 300;
 
