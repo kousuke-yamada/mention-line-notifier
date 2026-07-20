@@ -4,15 +4,16 @@ import { chromium } from "playwright";
 
 const COMMUNITY_URL =
   process.env.COMMUNITY_URL ??
-  "https://app.the-online-class.com/community/enterprise/oQMgoTZ";
+  "https://community-app.the-online-class.com/?enterprise_id=oQMgoTZ&tab=mention";
 const STATE_FILE = "state.json";
 const DEBUG_DIR = "debug";
-// メンション一覧の1件分を指すセレクタ。CSSモジュールのハッシュは再デプロイで
-// 変わりうるため、クラス名の前方一致で指定してハッシュ依存を避ける。
+// メンション一覧の1件分を指すセレクタ。data-testid はレイアウト変更やスタイルの
+// 変更に影響されないため、クラス名ではなくこちらを使う。
 // 未設定・空文字の場合はデフォルトを使う(?? は空文字を弾かないため trim()||)
 const MENTION_ITEM_SELECTOR =
   process.env.MENTION_ITEM_SELECTOR?.trim() ||
-  "[class*='_activity_list_container_'] > [class*='_hover_container_']";
+  "[data-testid^='mention-list-item-']";
+const MENTION_LIST_SELECTOR = "[data-testid='mention-list']";
 const MAX_SEEN = 300;
 
 const required = ["SITE_EMAIL", "SITE_PASSWORD"];
@@ -99,27 +100,18 @@ async function login(page) {
 
   console.log("ログイン成功");
   await page.waitForLoadState("networkidle");
-  if (!page.url().startsWith(COMMUNITY_URL)) {
+}
+
+// ログイン後はデフォルトチャンネルへリダイレクトされるため、
+// メンションタブの URL へ明示的に遷移し直す。
+async function openMentions(page) {
+  if (!page.url().includes("tab=mention")) {
     await page.goto(COMMUNITY_URL, { waitUntil: "networkidle" });
   }
-}
-
-async function openMentions(page) {
-  const menu = page.getByText("メンション", { exact: true }).first();
-  await menu.waitFor({ timeout: 15000 });
-  await menu.click();
-  await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(3000); // 一覧の描画待ち
-}
-
-// 相対時刻表示(今日/昨日 HH:MM、YYYY/M/D HH:MM)は時間経過で変化するため、
-// ID 算出前に除去する。これをしないと同じメンションが再通知されてしまう。
-function stableKey(text) {
-  return text
-    .replace(/(今日|昨日)\s*\d{1,2}:\d{2}/g, "")
-    .replace(/\d{4}\/\d{1,2}\/\d{1,2}\s*\d{1,2}:\d{2}/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  await page
+    .locator(MENTION_LIST_SELECTOR)
+    .waitFor({ state: "attached", timeout: 30000 });
+  await page.waitForTimeout(2000); // 一覧の描画待ち
 }
 
 async function collectMentions(page) {
@@ -128,7 +120,11 @@ async function collectMentions(page) {
   for (const item of items) {
     const text = (await item.innerText()).replace(/\s+/g, " ").trim();
     if (text.length < 5) continue;
-    mentions.push({ id: hash(stableKey(text)), text });
+    // data-testid の接尾辞はサーバー側のメンションIDなので、
+    // 本文や相対時刻表示が変わっても同一メンションを追跡できる。
+    const testId = await item.getAttribute("data-testid");
+    const serverId = testId?.replace(/^mention-list-item-/, "");
+    mentions.push({ id: serverId || hash(text), text });
   }
   return mentions;
 }

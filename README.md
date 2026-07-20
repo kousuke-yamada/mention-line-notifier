@@ -5,9 +5,10 @@ the-online-class のコミュニティで自分宛のメンションが追加さ
 ## 仕組み
 
 - GitHub Actions が 15 分おきに起動(cron のため数分遅延することあり)
-- Playwright でサイトにログインし、左メニュー「メンション」の一覧を取得
+- Playwright でサイトにログインし、メンションタブ(`?enterprise_id=...&tab=mention`)の一覧を取得
+  - ログイン直後はデフォルトチャンネルにリダイレクトされるため、メンションタブへ遷移し直している
 - 前回実行時との差分(新着)があれば LINE Messaging API で push 通知
-- 通知済みメンションは本文のハッシュ値のみ `state.json` に記録(本文はリポジトリに残さない)
+- 通知済みメンションはサイト側のメンションID(`data-testid="mention-list-item-<ID>"` の接尾辞)のみ `state.json` に記録(本文はリポジトリに残さない)
 - 初回実行は既存メンションを記録するだけで通知しない
 
 ## セットアップ
@@ -31,7 +32,14 @@ the-online-class のコミュニティで自分宛のメンションが追加さ
 | `LINE_CHANNEL_ACCESS_TOKEN` | チャネルアクセストークン(長期) |
 | `LINE_USER_ID` | 自分のLINEユーザーID(`U`で始まる文字列) |
 
-必要なら Variables に `MENTION_ITEM_SELECTOR` を登録するとセレクタを上書きできる。
+必要なら Variables に `MENTION_ITEM_SELECTOR`(一覧1件分のセレクタ)や `COMMUNITY_URL`(取得対象ページ)を登録すると上書きできる。
+
+### 参照先ページが変わったとき
+
+`COMMUNITY_URL` を新しい URL に変更し、`npm run discover` でセレクタが合っているか確認する。
+検出0件になる場合は `debug/mentions-page.html` から `data-testid` を探してセレクタを直す。
+メンションIDの体系ごと変わった場合は、旧IDが残っていると全件が新着扱いになるため
+`state.json` を `{"initialized": false, "seen": []}` に戻してから1回実行し、記録のみさせる。
 
 ### 3. ローカルでの動作確認
 
