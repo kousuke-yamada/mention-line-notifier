@@ -15,6 +15,12 @@ const MENTION_ITEM_SELECTOR =
   "[data-testid^='mention-list-item-']";
 const MENTION_LIST_SELECTOR = "[data-testid='mention-list']";
 const MAX_SEEN = 300;
+// CI は実機より遅く、スケジュール実行は数時間空くことがある(GitHub 側の間引き)。
+// 1回の失敗で次の実行まで通知が止まるため、その場でリトライして復旧させる。
+const LOGIN_TIMEOUT_MS = Number(process.env.LOGIN_TIMEOUT_MS) || 90000;
+const LOGIN_ATTEMPTS = Number(process.env.LOGIN_ATTEMPTS) || 3;
+// 失敗通知が毎回飛ぶと LINE の無料枠(月200通)を食い潰すため間隔を空ける
+const FAILURE_NOTIFY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 const required = ["SITE_EMAIL", "SITE_PASSWORD"];
 if (!process.env.DISCOVER) {
@@ -66,12 +72,12 @@ async function dumpDebug(page, label) {
   console.log(`デバッグ情報を ${DEBUG_DIR}/${label}.{png,html} に保存しました`);
 }
 
-async function login(page) {
+// 1回分のログイン試行。成功したら true、フォームが消えなければ false。
+async function attemptLogin(page) {
   await page.goto(COMMUNITY_URL, { waitUntil: "networkidle" });
   const passwordInput = page.locator("input[type='password']");
-  if ((await passwordInput.count()) === 0) return; // 既にログイン済み
+  if ((await passwordInput.count()) === 0) return true; // 既にログイン済み
 
-  console.log("ログインページを検出。ログインします...");
   const emailInput = page
     .locator("input[name='email'], input[type='email']")
     .first();
@@ -84,22 +90,37 @@ async function login(page) {
 
   // SPA のため画面遷移を待たず、ログインフォーム(パスワード欄)が消えるまで待つ
   try {
-    await passwordInput.first().waitFor({ state: "detached", timeout: 45000 });
+    await passwordInput
+      .first()
+      .waitFor({ state: "detached", timeout: LOGIN_TIMEOUT_MS });
+    return true;
   } catch {
-    // まだ残っている場合、エラーメッセージが出ていないか確認
-    const bodyText = await page.locator("body").innerText();
-    const errorHint = /認証|パスワード|正しく|失敗|エラー|reCAPTCHA/i.exec(
-      bodyText
-    );
-    await dumpDebug(page, "login-failed");
-    throw new Error(
-      "ログインに失敗しました(フォームが消えませんでした)。" +
-        (errorHint ? `画面のヒント: 「${errorHint[0]}」付近を確認` : "reCAPTCHA の可能性あり")
-    );
+    return false;
+  }
+}
+
+async function login(page) {
+  console.log("ログインします...");
+  for (let i = 1; i <= LOGIN_ATTEMPTS; i++) {
+    if (await attemptLogin(page)) {
+      console.log(`ログイン成功(試行 ${i}/${LOGIN_ATTEMPTS})`);
+      await page.waitForLoadState("networkidle");
+      return;
+    }
+    console.log(`ログイン試行 ${i}/${LOGIN_ATTEMPTS} 失敗`);
+    if (i < LOGIN_ATTEMPTS) await page.waitForTimeout(5000);
   }
 
-  console.log("ログイン成功");
-  await page.waitForLoadState("networkidle");
+  // 全試行が失敗。エラーメッセージが出ていないか確認して終了する
+  const bodyText = await page.locator("body").innerText();
+  const errorHint = /認証|パスワード|正しく|失敗|エラー|reCAPTCHA/i.exec(bodyText);
+  await dumpDebug(page, "login-failed");
+  throw new Error(
+    `ログインに失敗しました(${LOGIN_ATTEMPTS}回試行、フォームが消えませんでした)。` +
+      (errorHint
+        ? `画面のヒント: 「${errorHint[0]}」付近を確認`
+        : "reCAPTCHA の可能性あり")
+  );
 }
 
 // ログイン後はデフォルトチャンネルへリダイレクトされるため、
@@ -194,7 +215,32 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+// 失敗しても気づけないとサイレントに通知が止まるため LINE で知らせる。
+// ただし毎回送ると無料枠を食うので、前回通知から一定時間空いた場合のみ送る。
+async function notifyFailure(err) {
+  if (process.env.DISCOVER) return;
+  const state = loadState();
+  const last = state.failureNotifiedAt
+    ? Date.parse(state.failureNotifiedAt)
+    : 0;
+  if (Date.now() - last < FAILURE_NOTIFY_INTERVAL_MS) {
+    console.log("失敗通知は抑制されました(前回通知から間隔が短いため)");
+    return;
+  }
+  try {
+    await pushLine(
+      `【メンション監視エラー】\n${String(err?.message ?? err).slice(0, 200)}\n` +
+        `GitHub Actions のログを確認してください`
+    );
+    // 通知済み時刻を記録(成功時は saveState が上書きしてクリアされる)
+    saveState({ ...state, failureNotifiedAt: new Date().toISOString() });
+  } catch (e) {
+    console.error("失敗通知の送信にも失敗しました:", e.message);
+  }
+}
+
+main().catch(async (err) => {
   console.error(err);
+  await notifyFailure(err);
   process.exit(1);
 });

@@ -15,7 +15,8 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # ログインリトライ(最大3回×90秒)を含むため余裕を持たせる
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
