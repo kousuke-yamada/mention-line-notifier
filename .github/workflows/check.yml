@@ -47,6 +47,18 @@ jobs:
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           MENTION_ITEM_SELECTOR: ${{ vars.MENTION_ITEM_SELECTOR }}
 
+      # dumpDebug() が保存した失敗時の画面は runner ごと破棄されるため、
+      # 後から原因(エラー文言 / reCAPTCHA / メンテ画面)を確認できるよう回収する
+      - name: Upload debug snapshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          # 再実行時に同名 artifact で失敗しないよう attempt 番号も含める
+          name: debug-${{ github.run_id }}-${{ github.run_attempt }}
+          path: debug/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Commit state
         if: always()
         run: |
