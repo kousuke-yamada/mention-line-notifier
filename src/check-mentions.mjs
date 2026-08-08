@@ -156,6 +156,9 @@ async function main() {
     userAgent:
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     locale: "ja-JP",
+    // 投稿時刻は SPA がブラウザのタイムゾーンで描画するため、明示しないと
+    // UTC で動く CI runner 上では 9 時間ずれた時刻を拾ってしまう。
+    timezoneId: "Asia/Tokyo",
     viewport: { width: 1280, height: 800 },
   });
   const page = await context.newPage();
